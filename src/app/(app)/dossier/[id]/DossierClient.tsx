@@ -12,6 +12,7 @@ import {
   Loader2, RefreshCw, Check, AlertCircle, Building2, MapPin,
   Briefcase, GraduationCap, FileText, Zap
 } from "lucide-react";
+import { recordGenerated, recordEmailSent, recordMeetingScheduled, recordReply, type ProspectRef } from "@/lib/activity-store";
 
 type Tab = "person" | "company" | "why";
 
@@ -46,6 +47,15 @@ export function DossierClient({ recruiter, company }: Props) {
     location: recruiter.location,
     about: recruiter.about,
     hiring_signals: company.hiring_signals?.map(h => `${h.role} (posted ${h.posted})`) || []
+  };
+
+  // Reference used by the activity store for hot-prospect scoring + display
+  const prospectRef: ProspectRef = {
+    id: recruiter.id,
+    full_name: recruiter.full_name,
+    title: recruiter.title || "",
+    company: company.legal_name || "",
+    trust: recruiter.trust
   };
 
   async function generatePain() {
@@ -102,7 +112,16 @@ export function DossierClient({ recruiter, company }: Props) {
 
   function sendEmail() {
     setSent(true);
+    // Track in activity store: increment emails_sent, pipeline value, drop event on calendar
+    recordEmailSent(prospectRef, "Series-C TA leaders");
+    // Auto-schedule Day-3 follow-up (the core Workify promise) at the same time
+    recordMeetingScheduled(prospectRef, { daysFromNow: 3, hour: 9, minute: 30, type: "auto-followup", label: "Follow up" });
     setTimeout(() => setSent(false), 4000);
+  }
+
+  function simulateReply() {
+    const subject = email?.subject || "Quick thought on your hiring";
+    recordReply(prospectRef, subject);
   }
 
   return (
@@ -168,6 +187,7 @@ export function DossierClient({ recruiter, company }: Props) {
         <WhyTab
           recruiter={recruiter}
           company={company}
+          prospectRef={prospectRef}
           pain={pain}
           painLoading={painLoading}
           generatePain={generatePain}
@@ -179,6 +199,7 @@ export function DossierClient({ recruiter, company }: Props) {
           generatePrep={generatePrep}
           sent={sent}
           sendEmail={sendEmail}
+          simulateReply={simulateReply}
         />
       )}
     </div>
@@ -366,10 +387,11 @@ function CompanyTab({ company }: { company: Company; }) {
 
 function WhyTab(props: any) {
   const {
+    recruiter, prospectRef,
     pain, painLoading, generatePain,
     email, emailLoading, generateEmail,
     prep, prepLoading, generatePrep,
-    sent, sendEmail
+    sent, sendEmail, simulateReply
   } = props;
 
   return (
@@ -385,7 +407,7 @@ function WhyTab(props: any) {
             <div className="text-[13px] text-text">AI rationale, email draft, and call prep — generated on demand</div>
           </div>
         </div>
-        <Button variant="secondary" size="md" icon={<Zap size={13} strokeWidth={1.5} />} onClick={() => { generatePain(); generateEmail(); generatePrep(); }}>
+        <Button variant="secondary" size="md" icon={<Zap size={13} strokeWidth={1.5} />} onClick={() => { recordGenerated(prospectRef); generatePain(); generateEmail(); generatePrep(); }}>
           Generate everything
         </Button>
       </div>
@@ -524,8 +546,8 @@ function WhyTab(props: any) {
               </div>
               <div className="flex items-center gap-2 text-[11px]">
                 <span className="font-mono text-text-4 w-12">TO</span>
-                <span className="text-text">{props.recruiter.email}</span>
-                <TrustBadge tier={props.recruiter.email_status} />
+                <span className="text-text">{recruiter.email}</span>
+                <TrustBadge tier={recruiter.email_status} />
               </div>
               <div className="flex items-center gap-2 text-[11px]">
                 <span className="font-mono text-text-4 w-12">SUBJ</span>
@@ -580,12 +602,21 @@ function WhyTab(props: any) {
               <div className="w-6 h-6 rounded-sm bg-green/10 border border-green/30 flex items-center justify-center">
                 <Check size={12} strokeWidth={2.5} className="text-green" />
               </div>
-              <div>
+              <div className="flex-1">
                 <Eyebrow className="text-green mb-1">Confirmed</Eyebrow>
                 <p className="text-[12px] text-text-2">
-                  Email sent to <span className="text-text">{props.recruiter.email}</span> · Day-3 follow-up auto-scheduled in Google Calendar
+                  Email sent to <span className="text-text">{recruiter.email}</span> · Day-3 follow-up auto-scheduled in Google Calendar
                 </p>
               </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<Mail size={11} strokeWidth={1.5} />}
+                onClick={simulateReply}
+                title="Demo: simulate a reply landing in your inbox"
+              >
+                Simulate reply
+              </Button>
             </div>
           )}
         </section>
