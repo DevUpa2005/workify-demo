@@ -39,10 +39,10 @@ export interface NormalizedProfile {
   linkedin_url: string;
   experience: { title: string; company: string; duration: string; }[];
   education: { school: string; degree?: string; }[];
-  source: "linkdapi" | "fallback";
+  source: "linkdapi";
 }
 
-async function fetchWithTimeout(url: string, opts: RequestInit, timeoutMs = 15000) {
+async function fetchWithTimeout(url: string, opts: RequestInit, timeoutMs = 12000) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -53,10 +53,11 @@ async function fetchWithTimeout(url: string, opts: RequestInit, timeoutMs = 1500
 }
 
 /**
- * Look up a LinkedIn profile by username (the slug from the LinkedIn URL).
- * Example: linkedin.com/in/ryanroslansky → username = "ryanroslansky"
+ * Look up a LinkedIn profile by exact username (the slug from the LinkedIn URL).
+ * Returns null if not found, hits an error, or returns empty data.
  */
 export async function getProfileByUsername(username: string): Promise<NormalizedProfile | null> {
+  if (!username) return null;
   try {
     const url = `${BASE}/profile/overview?username=${encodeURIComponent(username)}`;
     const res = await fetchWithTimeout(url, {
@@ -64,12 +65,14 @@ export async function getProfileByUsername(username: string): Promise<Normalized
     });
 
     if (!res.ok) {
-      console.error("LinkdAPI error:", res.status, await res.text());
+      console.error("LinkdAPI HTTP error:", res.status, await res.text().catch(() => ""));
       return null;
     }
 
     const json = (await res.json()) as LinkdAPIProfile;
     if (!json.success || !json.data) return null;
+    // Reject empty shells — profile must have at least a name
+    if (!json.data.fullName && !json.data.firstName && !json.data.lastName) return null;
 
     const d = json.data;
     const current = d.CurrentPositions?.[0];
@@ -105,29 +108,55 @@ export async function getProfileByUsername(username: string): Promise<Normalized
 }
 
 /**
- * Best-effort search by name + company.
- * LinkdAPI's search isn't 1:1 with name+company, so we try to extract a username heuristically.
- * For the demo, we fall back to a known-username lookup if we can guess the slug.
+ * Extract a LinkedIn slug from any string that looks like a LinkedIn URL.
+ * Handles all of these:
+ *   https://www.linkedin.com/in/satyanadella
+ *   www.linkedin.com/in/satyanadella
+ *   linkedin.com/in/satyanadella/
+ *   linkedin.com/in/satya-nadella-1234
  */
-export async function searchByNameAndCompany(name: string, company?: string): Promise<NormalizedProfile | null> {
-  // Heuristic: convert "Sarah Chen" → "sarah-chen" as a username guess
-  const slug = name
+export function extractLinkedInSlug(input: string): string | null {
+  if (!input) return null;
+  const match = input.match(/(?:linkedin\.com\/in\/)([a-zA-Z0-9\-_.]+)/i);
+  if (match && match[1]) {
+    return match[1].replace(/\/$/, "").trim();
+  }
+  return null;
+}
+
+/**
+ * Best-effort search by free-text name input.
+ * Tries multiple slug variations because LinkedIn slugs are not 1:1 with names.
+ * Returns the first successful hit, or null if no variation matches.
+ */
+export async function searchByName(rawInput: string): Promise<NormalizedProfile | null> {
+  const cleaned = rawInput
     .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, "")
-    .trim()
-    .replace(/\s+/g, "-");
+    .replace(/[^a-z0-9\s.\-]/g, "")
+    .trim();
+  if (!cleaned) return null;
 
-  // Try the slug directly
-  let profile = await getProfileByUsername(slug);
-  if (profile) return profile;
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return null;
 
-  // Try slug + first initial of company (common LinkedIn collision-resolution pattern)
-  if (company) {
-    const initial = company.toLowerCase().replace(/[^a-z]/g, "").charAt(0);
-    const altSlug = `${slug}-${initial}`;
-    profile = await getProfileByUsername(altSlug);
+  const first = parts[0];
+  const last = parts.length > 1 ? parts[parts.length - 1] : "";
+
+  // Try many slug variants in order of likelihood
+  const variants = new Set<string>();
+  if (last) {
+    variants.add(`${first}-${last}`);   // sarah-chen
+    variants.add(`${first}${last}`);    // sarahchen
+    variants.add(`${first}.${last}`);   // sarah.chen
+    variants.add(`${first}-${last[0]}`); // sarah-c
+    variants.add(`${first[0]}${last}`); // schen
+    variants.add(`${first}${last[0]}`); // sarahc
+  }
+  variants.add(first); // just sarah (long shot)
+
+  for (const slug of variants) {
+    const profile = await getProfileByUsername(slug);
     if (profile) return profile;
   }
-
   return null;
 }

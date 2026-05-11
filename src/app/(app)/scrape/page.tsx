@@ -2,13 +2,13 @@
 
 import { useState, FormEvent, Suspense } from "react";
 import Link from "next/link";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { Eyebrow } from "@/components/ui/Eyebrow";
 import { Button } from "@/components/ui/Button";
 import { TrustBadge } from "@/components/ui/TrustBadge";
 import { Avatar } from "@/components/ui/Avatar";
 import { SectionHeader } from "@/components/ui/SectionHeader";
-import { Search, Linkedin, FileSpreadsheet, Globe, Loader2, ExternalLink, Sparkles } from "lucide-react";
+import { Search, Linkedin, FileSpreadsheet, Globe, Loader2, ExternalLink, Sparkles, AlertCircle } from "lucide-react";
 import { RECRUITERS } from "@/mocks/seed-data";
 import type { TrustTier } from "@/lib/types";
 
@@ -24,15 +24,13 @@ interface SearchResult {
   location: string;
   email?: string;
   trust: TrustTier;
-  resultSource: "linkdapi" | "inferred" | "seed";
+  resultSource: "linkdapi" | "seed";
   linkedin_url?: string;
   headline?: string;
   avatar_url?: string;
   about?: string;
   industry?: string;
   size?: string;
-  stage?: string;
-  hot_role?: string;
 }
 
 export default function ScrapePage() {
@@ -45,7 +43,6 @@ export default function ScrapePage() {
 
 function ScrapePageInner() {
   const search = useSearchParams();
-  const router = useRouter();
   const [source, setSource] = useState<Source>("linkedin");
   const [q, setQ] = useState(search?.get("q") || "");
   const [industry, setIndustry] = useState("SaaS / B2B");
@@ -55,15 +52,19 @@ function ScrapePageInner() {
 
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
-  const [error, setError] = useState("");
+  const [missMsg, setMissMsg] = useState("");
 
   async function runSearch(e?: FormEvent) {
     e?.preventDefault();
     if (!q.trim()) return;
     setLoading(true);
-    setError("");
+    setMissMsg("");
     setResults([]);
 
+    // Start with any matches from the seeded prospect list (these are real demo data)
+    const seeded = matchSeeded(q);
+
+    let liveResult: SearchResult | null = null;
     try {
       const res = await fetch("/api/search-prospect", {
         method: "POST",
@@ -71,48 +72,46 @@ function ScrapePageInner() {
         body: JSON.stringify({ query: q })
       });
       const data = await res.json();
-      const apiSource: "linkdapi" | "inferred" | null = data.source || null;
 
-      const seeded = matchSeeded(q);
-
-      const liveResults: SearchResult[] = data.profile
-        ? [{
-            id: "live-" + Date.now(),
-            full_name: data.profile.full_name,
-            first_name: data.profile.first_name,
-            last_name: data.profile.last_name,
-            title: data.profile.title,
-            company: data.profile.company,
-            location: data.profile.location,
-            email: data.profile.email,
-            trust: apiSource === "linkdapi" ? "verified" : "inferred",
-            resultSource: apiSource === "linkdapi" ? "linkdapi" : "inferred",
-            linkedin_url: data.profile.linkedin_url,
-            headline: data.profile.headline,
-            avatar_url: data.profile.avatar_url,
-            about: data.profile.about,
-            industry: data.profile.company_industry,
-            size: data.profile.company_size,
-            stage: data.profile.company_stage,
-            hot_role: data.profile.hot_role
-          }]
-        : [];
-
-      // Animate results in one at a time for that "live scrape" feel
-      const combined = [...liveResults, ...seeded];
-      for (let i = 0; i < combined.length; i++) {
-        await new Promise(r => setTimeout(r, 250 + Math.random() * 200));
-        setResults(prev => [...prev, combined[i]]);
-      }
-
-      if (combined.length === 0) {
-        setError("No profiles found. Try a different name or paste a LinkedIn URL.");
+      if (data.status === "hit" && data.profile) {
+        liveResult = {
+          id: "live-" + Date.now(),
+          full_name: data.profile.full_name,
+          first_name: data.profile.first_name,
+          last_name: data.profile.last_name,
+          title: data.profile.title,
+          company: data.profile.company,
+          location: data.profile.location,
+          trust: "verified",
+          resultSource: "linkdapi",
+          linkedin_url: data.profile.linkedin_url,
+          headline: data.profile.headline,
+          avatar_url: data.profile.avatar_url,
+          about: data.profile.about
+        };
+      } else if (seeded.length === 0) {
+        // No live result AND no seeded match — show honest empty state
+        if (data.status === "error") {
+          setMissMsg("LinkdAPI hit an error. Try again, or paste a full LinkedIn URL like linkedin.com/in/satyanadella");
+        } else if (data.reason === "url_not_found") {
+          setMissMsg(`LinkedIn returned no profile for "${data.attempted_slug}". The URL may be invalid or the profile may be private.`);
+        } else {
+          setMissMsg(`No match found. Try a full LinkedIn URL (e.g. linkedin.com/in/satyanadella) or one of the seeded prospects in your Leads list.`);
+        }
       }
     } catch (err) {
-      setError("Search failed. LinkdAPI may be rate-limited.");
-    } finally {
-      setLoading(false);
+      if (seeded.length === 0) {
+        setMissMsg("Network error. Please try again.");
+      }
     }
+
+    // Stream results in (animated reveal)
+    const combined = [...(liveResult ? [liveResult] : []), ...seeded];
+    for (let i = 0; i < combined.length; i++) {
+      await new Promise(r => setTimeout(r, 220 + Math.random() * 180));
+      setResults(prev => [...prev, combined[i]]);
+    }
+    setLoading(false);
   }
 
   function matchSeeded(query: string): SearchResult[] {
@@ -142,7 +141,7 @@ function ScrapePageInner() {
 
   function getDossierHref(r: SearchResult): string {
     if (r.resultSource === "seed") return `/dossier/${r.id}`;
-    // Live result — encode profile in URL so the Dossier page can render it
+    // Live LinkdAPI result — encode profile in URL so the Dossier page can render it
     const payload = {
       full_name: r.full_name,
       first_name: r.first_name,
@@ -157,9 +156,7 @@ function ScrapePageInner() {
       about: r.about,
       industry: r.industry,
       size: r.size,
-      stage: r.stage,
-      hot_role: r.hot_role,
-      source: r.resultSource
+      source: "linkdapi" as const
     };
     const encoded = encodeURIComponent(JSON.stringify(payload));
     return `/dossier/live?d=${encoded}`;
@@ -227,7 +224,7 @@ function ScrapePageInner() {
               <input
                 value={q}
                 onChange={e => setQ(e.target.value)}
-                placeholder="Sarah Chen · Notion HR"
+                placeholder="linkedin.com/in/satyanadella"
                 className="w-full h-9 bg-bg-2 border border-line rounded-sm pl-8 pr-3 text-[12px] text-text placeholder:text-text-4 focus:border-cyan"
               />
             </div>
@@ -242,8 +239,8 @@ function ScrapePageInner() {
               {loading ? "Scraping..." : "Run scrape"}
             </Button>
             <div className="text-[10px] text-text-4 font-mono leading-relaxed">
-              Tip: paste a full LinkedIn URL like<br />
-              <span className="text-text-3">linkedin.com/in/ryanroslansky</span>
+              Best results: paste a LinkedIn URL.<br />
+              Name search is hit-or-miss by design.
             </div>
           </form>
         </div>
@@ -273,16 +270,25 @@ function ScrapePageInner() {
             <Eyebrow>Trust</Eyebrow>
             <Eyebrow>Open</Eyebrow>
           </div>
-          {results.length === 0 && !loading && (
+
+          {results.length === 0 && !loading && !missMsg && (
             <div className="px-4 py-10 text-center text-text-4 text-[12px]">
-              {error || "Run a scrape to see live results stream in."}
+              Run a scrape to see live results stream in.
             </div>
           )}
+
+          {results.length === 0 && !loading && missMsg && (
+            <div className="px-6 py-8 flex items-start gap-3">
+              <AlertCircle size={16} strokeWidth={1.5} className="text-amber mt-0.5 shrink-0" />
+              <div className="text-[12.5px] text-text-2 leading-relaxed">
+                <div className="font-mono text-[10px] uppercase tracking-widest text-amber mb-1.5">No match</div>
+                {missMsg}
+              </div>
+            </div>
+          )}
+
           {results.map((r, i) => {
-            const sourceLabel =
-              r.resultSource === "linkdapi" ? "LinkdAPI" :
-              r.resultSource === "inferred" ? "Inferred" :
-              "Seed";
+            const sourceLabel = r.resultSource === "linkdapi" ? "LinkdAPI" : "Seed";
             return (
               <Link
                 key={r.id}
@@ -299,8 +305,8 @@ function ScrapePageInner() {
                     <div className="font-mono text-[10px] text-text-4">{r.email || "—"}</div>
                   </div>
                 </div>
-                <span className="text-[12px] text-text-2 truncate">{r.title}</span>
-                <span className="text-[12px] text-text-2 truncate">{r.company}</span>
+                <span className="text-[12px] text-text-2 truncate">{r.title || "—"}</span>
+                <span className="text-[12px] text-text-2 truncate">{r.company || "—"}</span>
                 <span className="font-mono text-[11px] text-text-3 truncate" style={{ fontVariantNumeric: "tabular-nums" }}>
                   {r.location || "—"}
                 </span>
@@ -311,6 +317,7 @@ function ScrapePageInner() {
               </Link>
             );
           })}
+
           {loading && (
             <div className="px-4 h-12 flex items-center gap-3 border-b border-line/60">
               <Loader2 size={13} className="animate-spin text-cyan" />
