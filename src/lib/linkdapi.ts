@@ -158,7 +158,7 @@ export async function getProfileByUsername(username: string): Promise<Normalized
         company: p.companyName || "",
         duration: fmtDuration(p.start, p.end)
       })),
-      education: (d.educations || []).slice(0, 3).map(e => ({
+      education: (d.educations || []).filter((e: any) => e.schoolName).slice(0, 3).map(e => ({
         school: e.schoolName || "",
         degree: e.degree || e.fieldOfStudy
       })),
