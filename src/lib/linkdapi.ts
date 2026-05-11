@@ -4,24 +4,55 @@
 const LINKDAPI_KEY = process.env.LINKDAPI_KEY!;
 const BASE = "https://linkdapi.com/api/v1";
 
+interface DateYM {
+  year?: number;
+  month?: number;
+  day?: number;
+}
+
+interface LinkdAPIPosition {
+  title?: string;
+  companyName?: string;
+  start?: DateYM | null;
+  end?: DateYM | null;
+  description?: string;
+  location?: string;
+  employmentType?: string;
+}
+
+interface LinkdAPIEducation {
+  schoolName?: string;
+  degree?: string;
+  fieldOfStudy?: string;
+  start?: DateYM | null;
+  end?: DateYM | null;
+}
+
+interface LinkdAPIGeo {
+  full?: string;
+  country?: string;
+  countryCode?: string;
+  city?: string;
+}
+
 interface LinkdAPIProfile {
   success?: boolean;
+  statusCode?: number;
+  message?: string;
   data?: {
     username?: string;
     firstName?: string;
     lastName?: string;
-    fullName?: string;
     headline?: string;
+    summary?: string;
     about?: string;
-    location?: string;
     profilePicture?: string;
-    publicIdentifier?: string;
-    CurrentPositions?: { title?: string; name?: string; companyName?: string; companyUrl?: string; }[];
-    PastPositions?: { title?: string; companyName?: string; duration?: string; }[];
-    Education?: { school?: string; degree?: string; field?: string; }[];
-    followerCount?: number;
-    connectionCount?: number;
-    urn?: string;
+    geo?: LinkdAPIGeo;
+    location?: string | LinkdAPIGeo | { fullLocation?: string; city?: string; countryName?: string; countryCode?: string };
+    position?: LinkdAPIPosition[];
+    fullPositions?: LinkdAPIPosition[];
+    currentPositions?: { companyName?: string; company?: { name?: string } }[];
+    educations?: LinkdAPIEducation[];
   };
   error?: string;
 }
@@ -42,6 +73,36 @@ export interface NormalizedProfile {
   source: "linkdapi";
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function fmtMonthYear(d?: DateYM | null): string {
+  if (!d || !d.year) return "";
+  const m = d.month;
+  const mStr = m && m >= 1 && m <= 12 ? `${MONTHS[m - 1]} ` : "";
+  return `${mStr}${d.year}`;
+}
+
+function fmtDuration(start?: DateYM | null, end?: DateYM | null): string {
+  const startStr = fmtMonthYear(start);
+  if (!startStr) return "";
+  const isPresent = !end || !end.year;
+  const endStr = isPresent ? "Present" : fmtMonthYear(end);
+  return `${startStr} — ${endStr}`;
+}
+
+function normalizeLocation(d: NonNullable<LinkdAPIProfile["data"]>): string {
+  if (d.geo) {
+    const full = d.geo.full || [d.geo.city, d.geo.country].filter(Boolean).join(", ");
+    if (full) return full;
+  }
+  if (d.location) {
+    if (typeof d.location === "string") return d.location;
+    const loc = d.location as any;
+    return loc.full || loc.fullLocation || [loc.city, loc.country || loc.countryName].filter(Boolean).join(", ") || "";
+  }
+  return "";
+}
+
 async function fetchWithTimeout(url: string, opts: RequestInit, timeoutMs = 12000) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -59,7 +120,7 @@ async function fetchWithTimeout(url: string, opts: RequestInit, timeoutMs = 1200
 export async function getProfileByUsername(username: string): Promise<NormalizedProfile | null> {
   if (!username) return null;
   try {
-    const url = `${BASE}/profile/overview?username=${encodeURIComponent(username)}`;
+    const url = `${BASE}/profile/full?username=${encodeURIComponent(username)}`;
     const res = await fetchWithTimeout(url, {
       headers: { "X-linkdapi-apikey": LINKDAPI_KEY }
     });
@@ -71,33 +132,35 @@ export async function getProfileByUsername(username: string): Promise<Normalized
 
     const json = (await res.json()) as LinkdAPIProfile;
     if (!json.success || !json.data) return null;
-    // Reject empty shells — profile must have at least a name
-    if (!json.data.fullName && !json.data.firstName && !json.data.lastName) return null;
+    if (!json.data.firstName && !json.data.lastName) return null;
 
     const d = json.data;
-    const current = d.CurrentPositions?.[0];
-    const first_name = d.firstName || (d.fullName || "").split(" ")[0] || "";
-    const last_name = d.lastName || (d.fullName || "").split(" ").slice(1).join(" ") || "";
+    const first_name = d.firstName || "";
+    const last_name = d.lastName || "";
+    const full_name = `${first_name} ${last_name}`.trim();
+
+    const current = d.position?.[0];
+    const expSource = (d.fullPositions && d.fullPositions.length > 0) ? d.fullPositions : (d.position || []);
 
     return {
-      full_name: d.fullName || `${first_name} ${last_name}`.trim(),
+      full_name,
       first_name,
       last_name,
-      headline: d.headline || "",
+      headline: d.headline?.trim() || "",
       title: current?.title || "",
-      company: current?.name || current?.companyName || "",
-      location: d.location || "",
+      company: current?.companyName || "",
+      location: normalizeLocation(d),
       avatar_url: d.profilePicture || "",
-      about: d.about || "",
-      linkedin_url: d.publicIdentifier ? `https://www.linkedin.com/in/${d.publicIdentifier}` : `https://www.linkedin.com/in/${username}`,
-      experience: (d.PastPositions || []).slice(0, 4).map(p => ({
+      about: d.summary || d.about || "",
+      linkedin_url: `https://www.linkedin.com/in/${d.username || username}`,
+      experience: expSource.slice(0, 5).map(p => ({
         title: p.title || "",
         company: p.companyName || "",
-        duration: p.duration || ""
+        duration: fmtDuration(p.start, p.end)
       })),
-      education: (d.Education || []).slice(0, 3).map(e => ({
-        school: e.school || "",
-        degree: e.degree
+      education: (d.educations || []).slice(0, 3).map(e => ({
+        school: e.schoolName || "",
+        degree: e.degree || e.fieldOfStudy
       })),
       source: "linkdapi"
     };
@@ -142,17 +205,16 @@ export async function searchByName(rawInput: string): Promise<NormalizedProfile 
   const first = parts[0];
   const last = parts.length > 1 ? parts[parts.length - 1] : "";
 
-  // Try many slug variants in order of likelihood
   const variants = new Set<string>();
   if (last) {
-    variants.add(`${first}-${last}`);   // sarah-chen
-    variants.add(`${first}${last}`);    // sarahchen
-    variants.add(`${first}.${last}`);   // sarah.chen
-    variants.add(`${first}-${last[0]}`); // sarah-c
-    variants.add(`${first[0]}${last}`); // schen
-    variants.add(`${first}${last[0]}`); // sarahc
+    variants.add(`${first}-${last}`);
+    variants.add(`${first}${last}`);
+    variants.add(`${first}.${last}`);
+    variants.add(`${first}-${last[0]}`);
+    variants.add(`${first[0]}${last}`);
+    variants.add(`${first}${last[0]}`);
   }
-  variants.add(first); // just sarah (long shot)
+  variants.add(first);
 
   for (const slug of variants) {
     const profile = await getProfileByUsername(slug);
