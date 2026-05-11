@@ -1,0 +1,161 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #07090c;
+  --bg-1: #0b0e13;
+  --bg-2: #0f131a;
+  --bg-3: #141923;
+  --line: #1d2433;
+  --line-2: #262f44;
+  --line-3: #2f3a52;
+  --text: #e7ecf3;
+  --text-2: #a8b3c4;
+  --text-3: #6f7d92;
+  --text-4: #4a5567;
+  --cyan: #00f5d4;
+  --amber: #f5b400;
+  --rose: #f04060;
+  --green: #3ad07c;
+  --violet: #a07cff;
+}
+
+* {
+  border-color: var(--line);
+  box-sizing: border-box;
+}
+
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Space Grotesk', -apple-system, sans-serif;
+  font-size: 13px;
+  line-height: 18px;
+  font-feature-settings: "ss01", "ss02", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Mono numbers everywhere they appear */
+.mono, .num {
+  font-family: 'JetBrains Mono', Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum", "zero";
+}
+
+/* Serif headlines — one per screen */
+.serif {
+  font-family: 'Fraunces', Georgia, serif;
+  font-variation-settings: 'opsz' 144;
+  letter-spacing: -0.01em;
+}
+
+/* Eyebrow labels */
+.eyebrow {
+  font-family: 'JetBrains Mono', Menlo, monospace;
+  font-size: 11px;
+  line-height: 14px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.eyebrow-cyan {
+  color: var(--cyan);
+}
+
+/* Density mode — compact reduces row heights and gaps */
+html[data-density="compact"] {
+  --row-height: 26px;
+  --gap-unit: 6px;
+}
+
+html[data-density="regular"], html {
+  --row-height: 32px;
+  --gap-unit: 8px;
+}
+
+/* Scrollbar — subtle, on-brand */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+  border-radius: 4px;
+  border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--line-3);
+}
+
+/* Focus rings — cyan, subtle, never default browser */
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 1px solid var(--cyan);
+  outline-offset: 1px;
+}
+
+/* Selection */
+::selection {
+  background: rgba(0, 245, 212, 0.25);
+  color: var(--text);
+}
+
+/* Cyan glow pulse — used on live indicators only */
+@keyframes pulse-cyan {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.pulse-cyan {
+  animation: pulse-cyan 2s ease-in-out infinite;
+}
+
+/* Subtle row fade-in for tables */
+@keyframes row-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.row-in {
+  animation: row-in 0.18s ease-out both;
+}
+
+/* Logo gradient — the ONE allowed gradient */
+.logo-gradient {
+  background: linear-gradient(135deg, var(--cyan) 0%, var(--violet) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Skeleton shimmer */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-2) 0%, var(--bg-3) 50%, var(--bg-2) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+/* No shadows, ever — enforced */
+* {
+  box-shadow: none !important;
+}
+*:where(.allow-shadow) {
+  box-shadow: revert !important;
+}
