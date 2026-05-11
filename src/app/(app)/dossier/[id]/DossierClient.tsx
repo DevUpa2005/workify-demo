@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Eyebrow } from "@/components/ui/Eyebrow";
 import { Button } from "@/components/ui/Button";
 import { TrustBadge } from "@/components/ui/TrustBadge";
@@ -13,6 +13,7 @@ import {
   Briefcase, GraduationCap, FileText, Zap
 } from "lucide-react";
 import { recordGenerated, recordEmailSent, recordMeetingScheduled, recordReply, type ProspectRef } from "@/lib/activity-store";
+import { useEnrichment } from "@/lib/enrichment-cache";
 
 type Tab = "person" | "company" | "why";
 
@@ -57,6 +58,30 @@ export function DossierClient({ recruiter, company }: Props) {
     company: company.legal_name || "",
     trust: recruiter.trust
   };
+
+  // Auto-enrichment: hydrate cached AI data for this prospect, or fetch on first dossier load.
+  // Cached forever per-prospect in localStorage — repeat visits are instant + free.
+  const enrichment = useEnrichment(recruiter.id, prospectCtx);
+
+  // When enrichment lands, pre-populate pain/email/prep so the Why & How tab renders
+  // without Mike needing to click anything. He can still hit Regenerate.
+  useEffect(() => {
+    if (!enrichment.data) return;
+    if (!pain) {
+      setPain({
+        pain_points: enrichment.data.pain_points,
+        why_now: enrichment.data.why_now,
+        angle: enrichment.data.angle
+      });
+    }
+    if (!email) {
+      setEmail(enrichment.data.email);
+    }
+    if (!prep) {
+      setPrep(enrichment.data.brief);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enrichment.data]);
 
   async function generatePain() {
     setPainLoading(true);
@@ -182,7 +207,7 @@ export function DossierClient({ recruiter, company }: Props) {
 
       {/* Tab content */}
       {tab === "person" && <PersonTab recruiter={recruiter} company={company} />}
-      {tab === "company" && <CompanyTab company={company} />}
+      {tab === "company" && <CompanyTab company={company} enrichment={enrichment.data} enrichmentLoading={enrichment.loading} regenerate={enrichment.regenerate} />}
       {tab === "why" && (
         <WhyTab
           recruiter={recruiter}
@@ -302,26 +327,87 @@ function PersonTab({ recruiter, company }: { recruiter: Recruiter; company: Comp
 
 // ============ COMPANY TAB ============
 
-function CompanyTab({ company }: { company: Company; }) {
+function CompanyTab({
+  company,
+  enrichment,
+  enrichmentLoading,
+  regenerate
+}: {
+  company: Company;
+  enrichment: any;
+  enrichmentLoading: boolean;
+  regenerate: () => void;
+}) {
+  // Prefer real company data when present, fall back to AI-enriched
+  const ind = company.industry || enrichment?.company?.industry;
+  const size = company.size || enrichment?.company?.size;
+  const stage = company.funding_stage || enrichment?.company?.stage;
+  const hq = company.hq_location || enrichment?.company?.headquarters;
+  const founded = company.founded?.toString() || enrichment?.company?.founded;
+  const summary = company.description || enrichment?.company?.summary;
+
+  // Each field is "verified" if it came from real data, "inferred" if AI-derived
+  const isInferred = (real: any, ai: any) => !real && ai;
+
+  const whyHot: { label: string; value: string; trust: "verified" | "inferred"; source: string; }[] =
+    company.signals?.length
+      ? company.signals.map(s => ({ label: s.label, value: s.value, trust: s.trust, source: s.source }))
+      : (enrichment?.why_hot || []).map((s: string, i: number) => ({
+          label: `Signal ${i + 1}`,
+          value: s,
+          trust: "inferred" as const,
+          source: "Claude"
+        }));
+
   return (
     <div className="grid grid-cols-[1fr_320px] gap-6">
       <div className="space-y-6">
         <section>
-          <SectionHeader eyebrow="Legal" title="Entity" actions={<TrustBadge tier={company.trust} source="Companies House" />} />
+          <SectionHeader
+            eyebrow="Legal"
+            title="Entity"
+            actions={
+              <div className="flex items-center gap-2">
+                {enrichmentLoading && <Loader2 size={12} className="animate-spin text-violet" />}
+                <TrustBadge tier={company.trust} source="Companies House" />
+              </div>
+            }
+          />
           <div className="bg-bg-1 border border-line rounded-md p-4 space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <KV label="Legal name" value={company.legal_name} />
               <KV label="Domain" value={company.domain} mono />
-              <KV label="HQ" value={company.hq_location || "—"} />
-              <KV label="Founded" value={company.founded?.toString() || "—"} mono />
-              <KV label="Industry" value={company.industry || "—"} />
-              <KV label="Headcount" value={company.size || "—"} mono />
-              <KV label="Funding stage" value={company.funding_stage || "—"} />
+              <KV label="HQ" value={hq || "—"} inferred={isInferred(company.hq_location, enrichment?.company?.headquarters)} />
+              <KV label="Founded" value={founded || "—"} mono inferred={isInferred(company.founded, enrichment?.company?.founded)} />
+              <KV label="Industry" value={ind || "—"} inferred={isInferred(company.industry, enrichment?.company?.industry)} />
+              <KV label="Headcount" value={size || "—"} mono inferred={isInferred(company.size, enrichment?.company?.size)} />
+              <KV label="Funding stage" value={stage || "—"} inferred={isInferred(company.funding_stage, enrichment?.company?.stage)} />
               <KV label="Funding total" value={company.funding_total || "—"} mono />
             </div>
-            {company.description && (
+            {summary && (
               <div className="pt-3 border-t border-line">
-                <p className="text-[13px] text-text-2 leading-relaxed">{company.description}</p>
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-[13px] text-text-2 leading-relaxed flex-1">{summary}</p>
+                  {isInferred(company.description, enrichment?.company?.summary) && (
+                    <TrustBadge tier="inferred" source="Claude" />
+                  )}
+                </div>
+              </div>
+            )}
+            {!enrichmentLoading && enrichment && (
+              <div className="pt-3 border-t border-line flex items-center justify-between">
+                <span className="font-mono text-[10px] text-text-4 tracking-wider uppercase">
+                  AI auto-fill complete · cached for this prospect
+                </span>
+                <Button variant="ghost" size="sm" icon={<RefreshCw size={11} strokeWidth={1.5} />} onClick={regenerate}>
+                  Regenerate
+                </Button>
+              </div>
+            )}
+            {enrichmentLoading && !enrichment && (
+              <div className="pt-3 border-t border-line flex items-center gap-2 text-text-3">
+                <Loader2 size={12} className="animate-spin text-violet" />
+                <span className="text-[12px]">Inferring company data with Claude...</span>
               </div>
             )}
           </div>
@@ -366,8 +452,19 @@ function CompanyTab({ company }: { company: Company; }) {
       <div className="space-y-6">
         <section>
           <SectionHeader eyebrow="Signals" title="Why they're hot" />
+          {whyHot.length === 0 && enrichmentLoading && (
+            <div className="bg-bg-1 border border-line rounded-md p-4 flex items-center gap-2 text-text-3">
+              <Loader2 size={12} className="animate-spin text-violet" />
+              <span className="text-[12px]">Inferring signals...</span>
+            </div>
+          )}
+          {whyHot.length === 0 && !enrichmentLoading && (
+            <div className="bg-bg-1 border border-line rounded-md p-4">
+              <p className="text-[12px] text-text-3">No signals yet.</p>
+            </div>
+          )}
           <div className="space-y-2">
-            {company.signals.map((s, i) => (
+            {whyHot.map((s, i) => (
               <div key={i} className="bg-bg-1 border border-line rounded-md p-3">
                 <div className="flex items-center justify-between mb-1">
                   <Eyebrow>{s.label}</Eyebrow>
@@ -541,7 +638,7 @@ function WhyTab(props: any) {
             <div className="px-4 py-3 border-b border-line bg-bg-2 space-y-1.5">
               <div className="flex items-center gap-2 text-[11px]">
                 <span className="font-mono text-text-4 w-12">FROM</span>
-                <span className="text-text">mike@paraform.com</span>
+                <span className="text-text">mike.dinunno@paraform.com</span>
                 <TrustBadge tier="verified" />
               </div>
               <div className="flex items-center gap-2 text-[11px]">
@@ -625,10 +722,17 @@ function WhyTab(props: any) {
   );
 }
 
-function KV({ label, value, mono = false }: { label: string; value: string; mono?: boolean; }) {
+function KV({ label, value, mono = false, inferred = false }: { label: string; value: string; mono?: boolean; inferred?: boolean; }) {
   return (
     <div>
-      <Eyebrow className="mb-1">{label}</Eyebrow>
+      <div className="flex items-center justify-between mb-1 gap-2">
+        <Eyebrow>{label}</Eyebrow>
+        {inferred && (
+          <span className="font-mono text-[9px] text-amber tracking-wider uppercase border border-amber/40 bg-amber/5 rounded-sm px-1 py-0.5">
+            INFERRED
+          </span>
+        )}
+      </div>
       <div className={`text-[13px] text-text ${mono ? "font-mono" : ""}`} style={mono ? { fontVariantNumeric: "tabular-nums" } : undefined}>
         {value}
       </div>

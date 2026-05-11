@@ -172,3 +172,95 @@ Generate the prep brief. Return JSON only.`;
 
   return callClaude(PREP_SYSTEM, userPrompt, 900);
 }
+
+// === DOSSIER ENRICHMENT (everything in one call) ===
+// Used for auto-fill on dossier load. Returns company facts + "why hot" signals
+// in a single API call. Cached client-side per-prospect.
+
+const ENRICH_SYSTEM = `\
+You are a B2B sales intelligence analyst enriching a recruiter dossier.
+
+The prospect's LinkedIn profile gave us their name, title, and current company. We need you to INFER plausible company facts and identify why this prospect is "hot" right now for Paraform sales outreach.
+
+Output strict JSON, no markdown:
+{
+  "company": {
+    "industry": "Specific industry (e.g. 'Health Tech', 'Developer Tools', 'Fintech') — pick the most likely one",
+    "size": "Headcount range (e.g. '50-200', '500-1000', '1000+')",
+    "stage": "Funding stage if growth-stage SaaS (e.g. 'Series B', 'Series C', 'Public') OR 'Bootstrapped' OR 'Established' if mature",
+    "headquarters": "City, State (US) or City, Country",
+    "founded": "Year as string (estimated), or '—' if truly unknown",
+    "summary": "One sentence (12-18 words) on what the company does and where they are in their journey"
+  },
+  "why_hot": [
+    "First signal — 8-14 words, specific. E.g. 'Just opened 5 engineering reqs in 2 weeks — backlog growing'",
+    "Second signal — 8-14 words, complementary angle",
+    "Third signal — 8-14 words, focused on urgency or capacity"
+  ],
+  "pain_points": [
+    "Pain statement 1 — 8-14 words, specific to their role and stage",
+    "Pain statement 2 — 8-14 words, complementary",
+    "Pain statement 3 — 8-14 words, focused on capacity or time-to-hire"
+  ],
+  "why_now": "One sentence (15-25 words) on why THIS WEEK is the right time to reach out",
+  "angle": "One sentence (10-15 words) on what hook to lead with",
+  "email": {
+    "subject": "4-8 word subject line",
+    "body": "60-100 word cold email body, signed 'Mike' on its own line. References specific hiring signal. Mentions 21-day fill rate. One clear CTA for 20-min call."
+  },
+  "brief": {
+    "headline": "One line, 8-12 words, the most important thing about this prospect",
+    "company_summary": "2 sentences on what the company does + hiring trajectory",
+    "person_summary": "2 sentences on the person — likely tenure, scope, what they care about",
+    "talking_points": ["Point 1 (12-18 words)", "Point 2", "Point 3"],
+    "objections": ["Objection + rebuttal (1 sentence each)", "Second objection + rebuttal"],
+    "ideal_outcome": "One sentence on what success looks like for the discovery call"
+  }
+}
+
+Be specific. Make reasonable inferences from name + title + company. If the company is small/solo (e.g. a consultancy), reflect that honestly in size/stage.
+For Mike's cold email tone: direct, peer-to-peer, no fluff, no exclamation marks, no "hope this finds you well."
+`;
+
+export interface EnrichedDossier {
+  company: {
+    industry: string;
+    size: string;
+    stage: string;
+    headquarters: string;
+    founded: string;
+    summary: string;
+  };
+  why_hot: string[];
+  pain_points: string[];
+  why_now: string;
+  angle: string;
+  email: { subject: string; body: string; };
+  brief: {
+    headline: string;
+    company_summary: string;
+    person_summary: string;
+    talking_points: string[];
+    objections: string[];
+    ideal_outcome: string;
+  };
+}
+
+export async function enrichDossier(p: ProspectContext): Promise<EnrichedDossier> {
+  const userPrompt = `\
+${PARAFORM_CONTEXT}
+
+PROSPECT:
+- Name: ${p.full_name} (first name: ${p.first_name})
+- Title: ${p.title}
+- Company: ${p.company}
+- Industry hint: ${p.company_industry || "unknown — infer"}
+- Size hint: ${p.company_size || "unknown — infer"}
+- Location: ${p.location || "unknown"}
+- About: ${p.about || "no about text — infer from title/company"}
+- Hiring signals: ${(p.hiring_signals || []).join("; ") || "none flagged"}
+
+Enrich this dossier with company facts, why-hot signals, pain points, a cold email, and a 1-page prep brief. Return JSON only.`;
+
+  return callClaude(ENRICH_SYSTEM, userPrompt, 2000);
+}
