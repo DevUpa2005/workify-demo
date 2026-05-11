@@ -2,7 +2,7 @@
 // Docs: https://linkdapi.com/docs
 
 const LINKDAPI_KEY = process.env.LINKDAPI_KEY!;
-const BASE = "https://api.linkdapi.com/v1";
+const BASE = "https://linkdapi.com/api/v1";
 
 interface LinkdAPIProfile {
   success?: boolean;
@@ -61,7 +61,7 @@ export async function getProfileByUsername(username: string): Promise<Normalized
   try {
     const url = `${BASE}/profile/overview?username=${encodeURIComponent(username)}`;
     const res = await fetchWithTimeout(url, {
-      headers: { "Authorization": `Bearer ${LINKDAPI_KEY}` }
+      headers: { "X-linkdapi-apikey": LINKDAPI_KEY }
     });
 
     if (!res.ok) {
